@@ -1,234 +1,178 @@
-# #--------------------------------------------------------------
-# // MARK: S3 Bucket
-# #--------------------------------------------------------------
-# resource "aws_s3_bucket" "default" {
-#   bucket = var.bucket_name
-#   acl    = "private"
-#   tags   = var.tags
-#   region = var.aws_region
-# }
+provider "aws" {
+  version = "~> 2.0"
+  region  = var.aws_region
+}
 
-# data "aws_iam_policy_document" "s3_bucket_policy" {
-#   statement {
-#     actions = [
-#       "s3:GetObject"
-#     ]
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+}
 
-#     resources = [
-#       "${aws_s3_bucket.default.arn}/*",
-#     ]
+#--------------------------------------------------------------
+// MARK: S3 Bucket
+#--------------------------------------------------------------
+resource "aws_s3_bucket" "default" {
+  region = var.aws_region
+  bucket = var.bucket_name
+  acl    = "private"
 
-#     principals {
-#       type = "AWS"
-#       identifiers = [
-#         aws_cloudfront_origin_access_identity.default.iam_arn,
-#       ]
-#     }
-#   }
+  tags = var.tags
 
-#   statement {
-#     actions = [
-#       "s3:ListBucket",
-#     ]
+  policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Id": "PolicyForCloudFrontPrivateContent",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ${aws_cloudfront_origin_access_identity.default.id}"
+            },
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::${var.bucket_name}/*"
+        }
+    ]
+}
+POLICY
+}
 
-#     resources = [
-#       aws_s3_bucket.default.arn,
-#     ]
-
-#     principals {
-#       type = "AWS"
-#       identifiers = [
-#         aws_cloudfront_origin_access_identity.default.iam_arn,
-#       ]
-#     }
-#   }
-
-#   statement {
-#     actions = [
-#       "s3:GetBucketLocation",
-#       "s3:ListBucket"
-#     ]
-
-#     resources = [
-#       aws_s3_bucket.default.arn,
-#     ]
-
-#     principals {
-#       type        = "AWS"
-#       identifiers = var.bucket_access_roles_arn_list
-#     }
-#   }
-
-#   statement {
-#     actions = [
-#       "s3:GetObject",
-#       "s3:PutObject"
-#     ]
-
-#     resources = [
-#       "${aws_s3_bucket.default.arn}/*",
-#     ]
-
-#     principals {
-#       type        = "AWS"
-#       identifiers = var.bucket_access_roles_arn_list
-#     }
-#   }
-# }
-
-# resource "aws_s3_bucket_policy" "bucket_policy" {
-#   bucket = aws_s3_bucket.default.id
-#   policy = data.aws_iam_policy_document.s3_bucket_policy.json
-# }
+locals {
+  s3_origin_id = "S3-${var.bucket_name}"
+}
 
 # #--------------------------------------------------------------
 # // MARK: CF Distribution
 # #--------------------------------------------------------------
-# resource "aws_cloudfront_origin_access_identity" "default" {
-#   comment = var.bucket_name
-# }
+resource "aws_cloudfront_origin_access_identity" "default" {
+  comment = var.bucket_name
+}
 
-# resource "aws_cloudfront_distribution" "default" {
-#   origin {
-#     domain_name = aws_s3_bucket.default.bucket_regional_domain_name
-#     origin_id   = local.s3_origin_id
+resource "aws_cloudfront_distribution" "default" {
+  origin {
+    domain_name = aws_s3_bucket.default.bucket_regional_domain_name
+    origin_id   = local.s3_origin_id
 
-#     s3_origin_config {
-#       origin_access_identity = aws_cloudfront_origin_access_identity.default.cloudfront_access_identity_path
-#     }
-#   }
+    s3_origin_config {
+      origin_access_identity = aws_cloudfront_origin_access_identity.default.cloudfront_access_identity_path
+    }
+  }
 
-#   aliases             = concat([var.cloudfront_distribution], [var.bucket_name], var.cloudfront_aliases)
-#   comment             = "Managed by Terraform"
-#   default_root_object = var.cloudfront_default_root_object
-#   enabled             = true
-#   http_version        = "http2"
-#   is_ipv6_enabled     = true
-#   price_class         = var.cloudfront_price_class
-#   tags                = var.tags
+  # aliases             = concat([var.cloudfront_distribution], [var.bucket_name], var.cloudfront_aliases)
+  comment             = "Managed by Terraform"
+  default_root_object = var.cloudfront_default_root_object
+  enabled             = true
+  http_version        = "http2"
+  is_ipv6_enabled     = true
+  price_class         = var.cloudfront_price_class
+  tags                = var.tags
 
-#   default_cache_behavior {
-#     target_origin_id = local.s3_origin_id
+  default_cache_behavior {
+    target_origin_id = local.s3_origin_id
 
-#     // Read only
-#     allowed_methods = [
-#       "GET",
-#       "HEAD",
-#     ]
+    // Read only
+    allowed_methods = [
+      "GET",
+      "HEAD",
+    ]
 
-#     cached_methods = [
-#       "GET",
-#       "HEAD",
-#     ]
+    cached_methods = [
+      "GET",
+      "HEAD",
+    ]
 
-#     forwarded_values {
-#       query_string = true
-#       headers = [
-#         "Access-Control-Request-Headers",
-#         "Access-Control-Request-Method",
-#         "Origin",
-#       ]
+    forwarded_values {
+      query_string = true
+      headers = [
+        "Access-Control-Request-Headers",
+        "Access-Control-Request-Method",
+        "Origin",
+      ]
 
-#       cookies {
-#         forward = "none"
-#       }
-#     }
+      cookies {
+        forward = "none"
+      }
+    }
 
-#     lambda_function_association {
-#       event_type = "viewer-request"
-#       lambda_arn = aws_lambda_function.default.qualified_arn
-#     }
+    lambda_function_association {
+      event_type = "viewer-request"
+      lambda_arn = aws_lambda_function.default.qualified_arn
+    }
 
-#     viewer_protocol_policy = "redirect-to-https"
-#   }
+    viewer_protocol_policy = "redirect-to-https"
+  }
 
-#   restrictions {
-#     geo_restriction {
-#       restriction_type = (var.geo_restriction_whitelisted_locations == "") ? "none" : "whitelist"
-#       locations        = (var.geo_restriction_whitelisted_locations == "") ? [] : [var.geo_restriction_whitelisted_locations]
-#     }
-#   }
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
 
-#   viewer_certificate {
-#     acm_certificate_arn            = var.cloudfront_acm_certificate_arn
-#     ssl_support_method             = "sni-only"
-#     cloudfront_default_certificate = false
-#   }
-# }
+  viewer_certificate {
+    #acm_certificate_arn            = var.cloudfront_acm_certificate_arn
+    #ssl_support_method             = "sni-only"
+    cloudfront_default_certificate = true
+  }
+}
 
 #--------------------------------------------------------------
 // MARK: Lambda Function
 #--------------------------------------------------------------
+resource "local_file" "default" {
+  content = templatefile("${path.module}/index_template.js", {
+    USER = var.user_name
+    PASS = var.password
+  })
+  filename = "${path.module}/.archive/index.js"
+}
+
 data "archive_file" "default" {
   type        = "zip"
-  source_file = "${path.module}/index.js"
-  output_path = "${path.root}/artifacts/index.zip"
+  source_file = "${path.module}/.archive/index.js"
+  output_path = "${path.module}/.archive/index.zip"
+
+  depends_on = [
+    local_file.default
+  ]
 }
-# data "aws_iam_policy_document" "lambda_log_access" {
-#   // Allow lambda access to logging
-#   statement {
-#     actions = [
-#       "logs:CreateLogGroup",
-#       "logs:CreateLogStream",
-#       "logs:PutLogEvents",
-#     ]
 
-#     resources = [
-#       "arn:aws:logs:*:*:*",
-#     ]
+resource "aws_iam_role" "iam_for_lambda" {
+  name = "basic-auth-lambda"
 
-#     effect = "Allow"
-#   }
-# }
+  assume_role_policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": "sts:AssumeRole",
+            "Principal": {
+                "Service": [
+                    "lambda.amazonaws.com",
+                    "edgelambda.amazonaws.com"
+                ]
+            },
+            "Effect": "Allow",
+            "Sid": ""
+        }
+    ]
+}
+POLICY
 
-# # This function is created in us-east-1 as required by CloudFront.
-# resource "aws_lambda_function" "default" {
-#   depends_on = [null_resource.copy_lambda_artifact]
+  tags = var.tags
+}
 
-#   provider         = aws.us-east-1
-#   description      = "Managed by Terraform"
-#   runtime          = "nodejs10.x"
-#   role             = aws_iam_role.lambda_role.arn
-#   filename         = local.lambda_filename
-#   function_name    = "cloudfront_auth"
-#   handler          = "index.handler"
-#   publish          = true
-#   timeout          = 5
-#   source_code_hash = filebase64sha256(data.null_data_source.lambda_artifact_sync.outputs["file"])
-#   tags             = var.tags
-# }
+resource "aws_lambda_function" "default" {
+  # This function is created in us-east-1 as required by CloudFront.
+  provider      = aws.us_east_1
+  function_name = "cloudfront-basic-auth"
+  filename      = data.archive_file.default.output_path
+  handler       = "index.handler"
+  role          = aws_iam_role.iam_for_lambda.arn
+  description   = "Lambda@Edge for Basic Auth with a CF Distribution"
+  memory_size   = 128
+  runtime       = "nodejs12.x"
+  timeout       = 5
+  publish       = true
+  #source_code_hash = filebase64sha256(data.archive_file.default.output_path)
 
-# resource "aws_iam_role" "default" {
-#   name = "${var.resource-name-prefix}-${var.environment-tag}-iam-role"
-
-#   assume_role_policy = <<POLICY
-# {
-#   "Version": "2012-10-17",
-#   "Statement": [
-#     {
-#       "Sid": "",
-#       "Action": "sts:AssumeRole",
-#       "Principal": {
-#         "Service": "lambda.amazonaws.com"
-#       },
-#       "Effect": "Allow"
-#     }
-#   ]
-# }
-# POLICY
-
-#   tags = var.tags
-# }
-
-# # Attach the logging access document to the above role.
-# resource "aws_iam_role_policy_attachment" "lambda_log_access" {
-#   role       = aws_iam_role.default.name
-#   policy_arn = aws_iam_policy.lambda_log_access.arn
-# }
-
-# # Create an IAM policy that will be attached to the role
-# resource "aws_iam_policy" "lambda_log_access" {
-#   name   = "cloudfront_auth_lambda_log_access"
-#   policy = data.aws_iam_policy_document.lambda_log_access.json
-# }
-
+  tags = var.tags
+}
